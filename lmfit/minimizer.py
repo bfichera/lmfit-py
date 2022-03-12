@@ -485,12 +485,14 @@ class Minimizer:
             self.userargs = []
 
         self.userkws = fcn_kws
+        self.maxnfev_alias_kws = {}
         if self.userkws is None:
             self.userkws = {}
         for maxnfev_alias in ('maxfev', 'maxiter'):
             if maxnfev_alias in kws:
                 warnings.warn(maxeval_warning.format(maxnfev_alias, 'Minimizer'),
                               RuntimeWarning)
+                self.maxnfev_alias_kws[maxnfev_alias] = kws[maxnfev_alias]
                 kws.pop(maxnfev_alias)
 
         self.kws = kws
@@ -2213,6 +2215,9 @@ class Minimizer:
                       visit=2.62, accept=-5.0, maxfun=2*self.max_nfev,
                       seed=None, no_local_search=False, callback=None,
                       x0=None)
+
+        if 'maxiter' in self.maxnfev_alias_kws:
+            da_kws['maxiter'] = self.maxnfev_alias_kws['maxiter']
 
         da_kws.update(self.kws)
         da_kws.update(kws)
