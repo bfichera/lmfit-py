@@ -20,6 +20,7 @@ Downloading and Installation
 .. _corner: https://github.com/dfm/corner.py
 .. _sphinx: https://www.sphinx-doc.org
 .. _jupyter_sphinx: https://jupyter-sphinx.readthedocs.io
+.. _ipykernel: https://github.com/ipython/ipykernel
 .. _sphinxcontrib-svg2pdfconverter: https://github.com/missinglinkelectronics/sphinxcontrib-svg2pdfconverter
 .. _cairosvg: https://cairosvg.org/
 .. _Pillow: https://python-pillow.org/
@@ -31,13 +32,13 @@ Downloading and Installation
 Prerequisites
 ~~~~~~~~~~~~~
 
-Lmfit works with `Python`_ versions 3.6 and higher. Version
+Lmfit works with `Python`_ versions 3.7 and higher. Version
 0.9.15 is the final version to support Python 2.7.
 
 Lmfit requires the following Python packages, with versions given:
-   * `NumPy`_ version 1.18 or higher.
-   * `SciPy`_ version 1.4 or higher.
-   * `asteval`_ version 0.9.22 or higher.
+   * `NumPy`_ version 1.19 or higher.
+   * `SciPy`_ version 1.6 or higher.
+   * `asteval`_ version 0.9.28 or higher.
    * `uncertainties`_ version 3.1.4 or higher.
 
 All of these are readily available on PyPI, and are installed
@@ -51,8 +52,8 @@ of them.
 
 For building the documentation and generating the examples gallery, `matplotlib`_,
 `emcee`_ (version 3+), `corner`_, `Sphinx`_, `sphinx-gallery`_, `jupyter_sphinx`_,
-`Pillow`_, and `SymPy`_ are required. For generating the PDF documentation, the Python
-packages `sphinxcontrib-svg2pdfconverter`_ and `cairosvg`_ are also required,
+`ipykernel`_, `Pillow`_, and `SymPy`_ are required. For generating the PDF documentation,
+the Python packages `sphinxcontrib-svg2pdfconverter`_ and `cairosvg`_ are also required,
 as well as the LaTex package `Latexmk`_ (which is included by default in some
 LaTex distributions).
 

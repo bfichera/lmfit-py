@@ -22,6 +22,7 @@ import numbers
 import warnings
 
 import numpy as np
+from scipy import __version__ as scipy_version
 from scipy.linalg import LinAlgError, inv
 from scipy.optimize import basinhopping as scipy_basinhopping
 from scipy.optimize import brute as scipy_brute
@@ -103,6 +104,10 @@ def asteval_with_uncertainties(*vals, **kwargs):
         return 0
     for val, name in zip(vals, _names):
         _asteval.symtable[name] = val
+
+    # re-evaluate all constraint parameters to
+    # force the propagation of uncertainties
+    [p._getval() for p in _pars.values()]
     return _asteval.eval(_obj._expr_ast)
 
 
@@ -598,7 +603,7 @@ class Minimizer:
             self.result.success = False
             raise AbortFitException("fit aborted by user.")
         else:
-            return _nan_policy(np.asarray(out).ravel(),
+            return _nan_policy(np.asfarray(out).ravel(),
                                nan_policy=self.nan_policy)
 
     def __jacobian(self, fvars):
@@ -712,6 +717,7 @@ class Minimizer:
         # and which are defined expressions.
         result.var_names = []  # note that this *does* belong to self...
         result.init_vals = []
+        result._init_vals_internal = []
         result.params.update_constraints()
         result.nfev = 0
         result.call_kws = {}
@@ -727,7 +733,8 @@ class Minimizer:
                 par.vary = False
             if par.vary:
                 result.var_names.append(name)
-                result.init_vals.append(par.setup_bounds())
+                result._init_vals_internal.append(par.setup_bounds())
+                result.init_vals.append(par.value)
 
             par.init_value = par.value
             if par.name is None:
@@ -790,8 +797,12 @@ class Minimizer:
             Hfun = ndt.Hessian(self.penalty, step=1.e-4)
             hessian_ndt = Hfun(fvars)
             cov_x = inv(hessian_ndt) * 2.0
+
+            if cov_x.diagonal().min() < 0:
+                # we know the calculated covariance is incorrect, so we set the covariance to None
+                cov_x = None
         except (LinAlgError, ValueError):
-            return None
+            cov_x = None
         finally:
             self.result.nfev = nfev
 
@@ -871,8 +882,8 @@ class Minimizer:
                 for par in self.result.params.values():
                     eval_stderr(par, uvars, self.result.var_names, self.result.params)
                 # restore nominal values
-                for v, nam in zip(uvars, self.result.var_names):
-                    self.result.params[nam].value = v.nominal_value
+                for v, name in zip(uvars, self.result.var_names):
+                    self.result.params[name].value = v.nominal_value
 
     def scalar_minimize(self, method='Nelder-Mead', params=None, max_nfev=None,
                         **kws):
@@ -951,11 +962,15 @@ class Minimizer:
         """
         result = self.prepare_fit(params=params)
         result.method = method
-        variables = result.init_vals
+        variables = result._init_vals_internal
         params = result.params
 
         self.set_max_nfev(max_nfev, 2000*(result.nvarys+1))
         fmin_kws = dict(method=method, options={'maxiter': 2*self.max_nfev})
+        if method == 'L-BFGS-B':
+            fmin_kws['options']['maxfun'] = 2*self.max_nfev
+
+        # fmin_kws = dict(method=method, options={'maxfun': 2*self.max_nfev})
         fmin_kws.update(self.kws)
 
         if 'maxiter' in kws:
@@ -1568,19 +1583,30 @@ class Minimizer:
             lower_bounds.append(replace_none(par.min, -1))
             upper_bounds.append(replace_none(par.max, 1))
 
-        result.call_kws = kws
+        least_squares_kws = dict(jac='2-point', method='trf', ftol=1e-08,
+                                 xtol=1e-08, gtol=1e-08, x_scale=1.0,
+                                 loss='linear', f_scale=1.0, diff_step=None,
+                                 tr_solver=None, tr_options={},
+                                 jac_sparsity=None, max_nfev=2*self.max_nfev,
+                                 verbose=0, kwargs={})
+
+        least_squares_kws.update(self.kws)
+        least_squares_kws.update(kws)
+
+        least_squares_kws['kwargs'].update({'apply_bounds_transformation': False})
+        result.call_kws = least_squares_kws
+
         try:
             ret = least_squares(self.__residual, start_vals,
                                 bounds=(lower_bounds, upper_bounds),
-                                kwargs=dict(apply_bounds_transformation=False),
-                                max_nfev=2*self.max_nfev, **kws)
+                                **least_squares_kws)
             result.residual = ret.fun
         except AbortFitException:
             pass
 
-        # note: upstream least_squares is actually returning
-        # "last evaluation", not "best result", do we do that
-        # here for consistency
+        # Note: scipy.optimize.least_squares is actually returning the
+        # "last evaluation", which is not necessarily the "best result"; so we
+        # do that here for consistency
         if not result.aborted:
             result.nfev -= 1
             result.residual = self.__residual(ret.x, False)
@@ -1588,7 +1614,10 @@ class Minimizer:
 
         if not result.aborted:
             for attr in ret:
-                setattr(result, attr, ret[attr])
+                outattr = attr
+                if attr == 'nfev':
+                    outattr = 'least_squares_nfev'
+                setattr(result, outattr, ret[attr])
 
             result.x = np.atleast_1d(result.x)
 
@@ -1617,22 +1646,7 @@ class Minimizer:
         from the covariance matrix.
 
         This method calls :scipydoc:`optimize.leastsq` and, by default,
-        numerical derivatives are used, and the following arguments are
-        set:
-
-        +------------------+----------------+------------------------+
-        | :meth:`leastsq`  |  Default Value | Description            |
-        | arg              |                |                        |
-        +==================+================+========================+
-        |  `xtol`          |  1.e-7         | Relative error in the  |
-        |                  |                | approximate solution   |
-        +------------------+----------------+------------------------+
-        |  `ftol`          |  1.e-7         | Relative error in the  |
-        |                  |                | desired sum-of-squares |
-        +------------------+----------------+------------------------+
-        |  `Dfun`          | None           | Function to call for   |
-        |                  |                | Jacobian calculation   |
-        +------------------+----------------+------------------------+
+        numerical derivatives are used.
 
         Parameters
         ----------
@@ -1659,14 +1673,16 @@ class Minimizer:
         result = self.prepare_fit(params=params)
         result.method = 'leastsq'
         result.nfev -= 2  # correct for "pre-fit" initialization/checks
-        variables = result.init_vals
+        variables = result._init_vals_internal
 
-        # note we set the max number of function evaluations here, and send twice that
-        # value to the solver so it essentially never stops on its own
+        # Note: we set max number of function evaluations here, and send twice
+        # that value to the solver so it essentially never stops on its own
         self.set_max_nfev(max_nfev, 2000*(result.nvarys+1))
 
-        lskws = dict(full_output=1, xtol=1.e-7, ftol=1.e-7, col_deriv=False,
-                     gtol=1.e-7, maxfev=2*self.max_nfev, Dfun=None)
+        lskws = dict(Dfun=None, full_output=1, col_deriv=0, ftol=1.5e-8,
+                     xtol=1.5e-8, gtol=0.0, maxfev=2*self.max_nfev,
+                     epsfcn=1.e-10, factor=100, diag=None)
+
         if 'maxfev' in kws:
             warnings.warn(maxeval_warning.format('maxfev', thisfuncname()),
                           RuntimeWarning)
@@ -1675,6 +1691,7 @@ class Minimizer:
         lskws.update(self.kws)
         lskws.update(kws)
         self.col_deriv = False
+
         if lskws['Dfun'] is not None:
             self.jacfcn = lskws['Dfun']
             self.col_deriv = lskws['col_deriv']
@@ -1770,14 +1787,19 @@ class Minimizer:
         result.method = 'basinhopping'
         self.set_max_nfev(max_nfev, 200000*(result.nvarys+1))
         basinhopping_kws = dict(niter=100, T=1.0, stepsize=0.5,
-                                minimizer_kwargs={}, take_step=None,
+                                minimizer_kwargs=None, take_step=None,
                                 accept_test=None, callback=None, interval=50,
                                 disp=False, niter_success=None, seed=None)
+
+        # FIXME: update when SciPy requirement is >= 1.8
+        if int(scipy_version.split('.')[1]) >= 8:
+            basinhopping_kws.update({'target_accept_rate': 0.5,
+                                     'stepwise_factor': 0.9})
 
         basinhopping_kws.update(self.kws)
         basinhopping_kws.update(kws)
 
-        x0 = result.init_vals
+        x0 = result._init_vals_internal
         result.call_kws = basinhopping_kws
         try:
             ret = scipy_basinhopping(self.penalty, x0, **basinhopping_kws)
@@ -2070,7 +2092,7 @@ class Minimizer:
         ampgo_kws.update(self.kws)
         ampgo_kws.update(kws)
 
-        values = result.init_vals
+        values = result._init_vals_internal
         result.method = f"ampgo, with {ampgo_kws['local']} as local solver"
         result.call_kws = ampgo_kws
         try:
@@ -2143,6 +2165,10 @@ class Minimizer:
                         minimizer_kwargs=None, options=None,
                         sampling_method='simplicial')
 
+        # FIXME: update when SciPy requirement is >= 1.7
+        if int(scipy_version.split('.')[1]) >= 7:
+            shgo_kws['n'] = None
+
         shgo_kws.update(self.kws)
         shgo_kws.update(kws)
 
@@ -2213,14 +2239,18 @@ class Minimizer:
         da_kws = dict(maxiter=1000, local_search_options={},
                       initial_temp=5230.0, restart_temp_ratio=2e-05,
                       visit=2.62, accept=-5.0, maxfun=2*self.max_nfev,
-                      seed=None, no_local_search=False, callback=None,
-                      x0=None)
+                      seed=None, no_local_search=False, callback=None, x0=None)
 
         if 'maxiter' in self.maxnfev_alias_kws:
             da_kws['maxiter'] = self.maxnfev_alias_kws['maxiter']
 
         da_kws.update(self.kws)
         da_kws.update(kws)
+
+        # FIXME: update when SciPy requirement is >= 1.8
+        # ``local_search_options`` deprecated in favor of ``minimizer_kwargs``
+        if int(scipy_version.split('.')[1]) >= 8:
+            da_kws.update({'minimizer_kwargs': da_kws.pop('local_search_options')})
 
         varying = np.asarray([par.vary for par in self.params.values()])
         bounds = np.asarray([(par.min, par.max) for par in

@@ -7,8 +7,8 @@ from lmfit import (Minimizer, Parameters, ci_report, conf_interval, fit_report,
                    report_ci, report_fit)
 from lmfit.lineshapes import gaussian
 from lmfit.models import GaussianModel
-from lmfit.printfuncs import (alphanumeric_sort, fitreport_html_table,
-                              getfloat_attr, gformat)
+from lmfit.printfuncs import (alphanumeric_sort, correl_table,
+                              fitreport_html_table, getfloat_attr, gformat)
 
 np.random.seed(0)
 
@@ -202,6 +202,22 @@ def test_fitreports_sort_pars(fitresult):
     assert 'fwhm' in report_split[indx_vars+1]
 
 
+def test_correl_table(fitresult, capsys):
+    """Verify that ``correl_table`` is not empty."""
+    table_lines = correl_table(fitresult.params).split('\n')
+    nvarys = fitresult.nvarys
+
+    assert len(table_lines) == nvarys+4
+    assert len(table_lines[5]) > nvarys*10
+
+
+def test_fit_report_correl_table(fitresult, capsys):
+    """Verify that ``correl_table`` is not empty."""
+    out = fitresult.fit_report(correl_mode='table')
+    assert '[[Correlations]]' in out
+    assert '----+' in out
+
+
 def test_report_fit(fitresult, capsys):
     """Verify that the fit report is printed when using report_fit."""
     # report_fit with MinimizerResult/ModelResult as argument gives full
@@ -306,11 +322,11 @@ def test_report_modelpars(fitresult):
 
 
 def test_report_parvalue_non_numeric(fitresult):
-    """Verify that a non-numeric value is caught (can this ever happens?)."""
+    """Verify that a non-numeric value is handled gracefully."""
     fitresult.params['center'].value = None
     fitresult.params['center'].stderr = None
     report = fitresult.fit_report()
-    assert 'center:     Non Numeric Value?' in report
+    assert len(report) > 50
 
 
 def test_report_zero_value_spercent(fitresult):

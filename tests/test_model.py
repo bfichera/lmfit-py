@@ -1,17 +1,17 @@
 """Tests for the Model, CompositeModel, and ModelResult classes."""
 
 import functools
-import sys
 import unittest
 import warnings
 
 import numpy as np
 from numpy.testing import assert_allclose
 import pytest
+from scipy import __version__ as scipy_version
 
 import lmfit
 from lmfit import Model, models
-from lmfit.lineshapes import gaussian
+from lmfit.lineshapes import gaussian, lorentzian
 from lmfit.model import get_reducer, propagate_err
 from lmfit.models import PseudoVoigtModel
 
@@ -19,7 +19,7 @@ from lmfit.models import PseudoVoigtModel
 @pytest.fixture()
 def gmodel():
     """Return a Gaussian model."""
-    return Model(lmfit.lineshapes.gaussian)
+    return Model(gaussian)
 
 
 def test_get_reducer_invalid_option():
@@ -127,7 +127,7 @@ def test_initialize_Model_class_default_arguments(gmodel):
 
 def test_initialize_Model_class_independent_vars():
     """Test for Model class initialized with independent_vars."""
-    model = Model(lmfit.lineshapes.gaussian, independent_vars=['amplitude'])
+    model = Model(gaussian, independent_vars=['amplitude'])
     assert model._param_root_names == ['x', 'center', 'sigma']
     assert model.param_names == ['x', 'center', 'sigma']
     assert model.independent_vars == ['amplitude']
@@ -135,7 +135,7 @@ def test_initialize_Model_class_independent_vars():
 
 def test_initialize_Model_class_param_names():
     """Test for Model class initialized with param_names."""
-    model = Model(lmfit.lineshapes.gaussian, param_names=['amplitude'])
+    model = Model(gaussian, param_names=['amplitude'])
 
     assert model._param_root_names == ['amplitude']
     assert model.param_names == ['amplitude']
@@ -144,28 +144,28 @@ def test_initialize_Model_class_param_names():
 @pytest.mark.parametrize("policy", ['raise', 'omit', 'propagate'])
 def test_initialize_Model_class_nan_policy(policy):
     """Test for Model class initialized with nan_policy."""
-    model = Model(lmfit.lineshapes.gaussian, nan_policy=policy)
+    model = Model(gaussian, nan_policy=policy)
 
     assert model.nan_policy == policy
 
 
 def test_initialize_Model_class_prefix():
     """Test for Model class initialized with prefix."""
-    model = Model(lmfit.lineshapes.gaussian, prefix='test_')
+    model = Model(gaussian, prefix='test_')
 
     assert model.prefix == 'test_'
     assert model._param_root_names == ['amplitude', 'center', 'sigma']
     assert model.param_names == ['test_amplitude', 'test_center', 'test_sigma']
     assert model.name == "Model(gaussian, prefix='test_')"
 
-    model = Model(lmfit.lineshapes.gaussian, prefix=None)
+    model = Model(gaussian, prefix=None)
 
     assert model.prefix == ''
 
 
 def test_initialize_Model_name():
     """Test for Model class initialized with name."""
-    model = Model(lmfit.lineshapes.gaussian, name='test_function')
+    model = Model(gaussian, name='test_function')
 
     assert model.name == 'Model(test_function)'
 
@@ -173,7 +173,7 @@ def test_initialize_Model_name():
 def test_initialize_Model_kws():
     """Test for Model class initialized with **kws."""
     kws = {'amplitude': 10.0}
-    model = Model(lmfit.lineshapes.gaussian,
+    model = Model(gaussian,
                   independent_vars=['x', 'amplitude'], **kws)
 
     assert model._param_root_names == ['center', 'sigma']
@@ -190,7 +190,7 @@ test_reprstring_data = [(False, 'Model(gaussian)'),
 def test_Model_reprstring(option, expected):
     """Test for Model class function _reprstring."""
     kws = {'amplitude': 10.0}
-    model = Model(lmfit.lineshapes.gaussian,
+    model = Model(gaussian,
                   independent_vars=['x', 'amplitude'], **kws)
 
     assert model._reprstring(option) == expected
@@ -218,7 +218,7 @@ def test_Model_set_state(gmodel):
     """
     out = gmodel._get_state()
 
-    new_model = Model(lmfit.lineshapes.lorentzian)
+    new_model = Model(lorentzian)
     new_model = new_model._set_state(out)
 
     assert new_model.prefix == gmodel.prefix
@@ -357,8 +357,8 @@ def test__parse_params_forbidden_variable_names():
         Model(func_invalid_par)
 
 
-input_dtypes = [(np.int32, np.float64), (np.float32, np.float64),
-                (np.complex64, np.complex128), ('list', np.float64),
+input_dtypes = [(np.int32, np.int32), (np.float32, np.float32),
+                (np.complex64, np.complex64), ('list', np.float64),
                 ('tuple', np.float64), ('pandas-real', np.float64),
                 ('pandas-complex', np.complex128)]
 
@@ -486,6 +486,36 @@ def test_priority_setting_figure_title(peakdata):
     assert fig.axes[1].get_title() == ''
 
 
+def test_eval_with_kwargs():
+    # Check eval() with both params and kwargs, even when there are
+    # constraints
+    x = np.linspace(0, 30, 301)
+    np.random.seed(13)
+    y1 = (gaussian(x, amplitude=10, center=12.0, sigma=2.5) +
+          gaussian(x, amplitude=20, center=19.0, sigma=2.5))
+
+    y2 = (gaussian(x, amplitude=10, center=12.0, sigma=1.5) +
+          gaussian(x, amplitude=20, center=19.0, sigma=2.5))
+
+    model = Model(gaussian, prefix='g1_') + Model(gaussian, prefix='g2_')
+    params = model.make_params(g1_amplitude=10, g1_center=12.0, g1_sigma=1,
+                               g2_amplitude=20, g2_center=19.0,
+                               g2_sigma={'expr': 'g1_sigma'})
+
+    r1 = model.eval(params, g1_sigma=2.5, x=x)
+    assert_allclose(r1, y1, atol=1.e-3)
+
+    assert params['g2_sigma'].value == 1
+    assert params['g1_sigma'].value == 1
+
+    params['g1_sigma'].value = 1.5
+    params['g2_sigma'].expr = None
+    params['g2_sigma'].value = 2.5
+
+    r2 = model.eval(params, x=x)
+    assert_allclose(r2, y2, atol=1.e-3)
+
+
 def test_guess_requires_x():
     """Test to make sure that ``guess()`` method requires the argument ``x``.
 
@@ -564,7 +594,7 @@ class CommonTests:
         result = model.fit(self.data, params, x=self.x)
         assert_results_close(result.values, self.true_values())
 
-        # Pass inidividual Parameter objects as kwargs.
+        # Pass individual Parameter objects as kwargs.
         kwargs = dict(params.items())
         result = self.model.fit(self.data, x=self.x, **kwargs)
         assert_results_close(result.values, self.true_values())
@@ -1184,12 +1214,19 @@ class TestUserDefiniedModel(CommonTests, unittest.TestCase):
 
         # with propagate, should get no error, but bad results
         result = mod.fit(y, params, x=x, nan_policy='propagate')
-        self.assertTrue(result.success)
-        self.assertTrue(np.isnan(result.chisqr))
-        self.assertTrue(np.isnan(result.aic))
-        self.assertFalse(result.errorbars)
-        self.assertTrue(result.params['amplitude'].stderr is None)
-        self.assertTrue(abs(result.params['amplitude'].value - 20.0) < 0.001)
+
+        # for SciPy v1.10+ this results in an AbortFitException, even with
+        # `max_nfev=100000`:
+        #   lmfit.minimizer.AbortFitException: fit aborted: too many function
+        #   evaluations xxxxx
+        if int(scipy_version.split('.')[1]) < 10:
+            self.assertTrue(np.isnan(result.chisqr))
+            self.assertTrue(np.isnan(result.aic))
+            self.assertFalse(result.errorbars)
+            self.assertTrue(result.params['amplitude'].stderr is None)
+            self.assertTrue(abs(result.params['amplitude'].value - 20.0) < 0.001)
+        else:
+            pass
 
         # with omit, should get good results
         result = mod.fit(y, params, x=x, nan_policy='omit')
@@ -1225,8 +1262,6 @@ class TestUserDefiniedModel(CommonTests, unittest.TestCase):
         msg = 'The model function generated NaN values and the fit aborted!'
         self.assertRaisesRegex(ValueError, msg, result)
 
-    @pytest.mark.skipif(sys.version_info.major == 2,
-                        reason="cannot use wrapped functions with Python 2")
     def test_wrapped_model_func(self):
         x = np.linspace(-1, 1, 51)
         y = 2.0*x + 3 + 0.0003 * x*x
@@ -1246,6 +1281,21 @@ class TestUserDefiniedModel(CommonTests, unittest.TestCase):
 
         self.assertTrue(abs(result.params['a'].value - 2.0) < 0.05)
         self.assertTrue(abs(result.params['b'].value - 3.0) < 0.41)
+
+    def test_different_independent_vars_composite_modeld(self):
+        """Regression test for different independent variables in CompositeModel.
+
+        See: https://github.com/lmfit/lmfit-py/discussions/787
+
+        """
+        def two_independent_vars(y, z, a):
+            return a * y + z
+
+        BackgroundModel = Model(two_independent_vars,
+                                independent_vars=["y", "z"], prefix="yz_")
+        PeakModel = Model(gaussian, independent_vars=["x"], prefix="x_")
+        CompModel = BackgroundModel + PeakModel
+        assert CompModel.independent_vars == ['x', 'y', 'z']
 
 
 class TestLinear(CommonTests, unittest.TestCase):
@@ -1349,3 +1399,37 @@ class TestExpression(CommonTests, unittest.TestCase):
 
         data_components = comp_model.eval_components(x=x)
         self.assertIn('exp', data_components)
+
+
+def test_make_params_valuetypes():
+    mod = lmfit.models.SineModel()
+
+    pars = mod.make_params(amplitude=1, frequency=1, shift=-0.2)
+
+    pars = mod.make_params(amplitude={'value': 0.9, 'min': 0},
+                           frequency=1.03,
+                           shift={'value': -0.2, 'vary': False})
+
+    val_i32 = np.arange(10, dtype=np.int32)
+    val_i64 = np.arange(10, dtype=np.int64)
+    # np.longdouble equals to np.float128 on Linux and macOS, np.float64 on Windows
+    val_ld = np.arange(10, dtype=np.longdouble)/3.0
+    val_c128 = np.arange(10, dtype=np.complex128)/3.0
+
+    pars = mod.make_params(amplitude=val_i64[2],
+                           frequency=val_i32[3],
+                           shift=-val_ld[4])
+
+    pars = mod.make_params(amplitude=val_c128[2],
+                           frequency=val_i32[3],
+                           shift=-val_ld[4])
+
+    assert pars is not None
+    with pytest.raises(ValueError):
+        pars = mod.make_params(amplitude='a string', frequency=2, shift=7)
+
+    with pytest.raises(TypeError):
+        pars = mod.make_params(amplitude={'v': 3}, frequency=2, shift=7)
+
+    with pytest.raises(TypeError):
+        pars = mod.make_params(amplitude={}, frequency=2, shift=7)

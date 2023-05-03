@@ -11,16 +11,84 @@ significant to the use and behavior of the library. This is not meant
 to be a comprehensive list of changes. For such a complete record,
 consult the `lmfit GitHub repository`_.
 
-.. _whatsnew_104_label:
+.. _whatsnew_121_label:
 
-Version 1.0.4 Release Notes (unreleased)
-========================================
+Version 1.2.1 Release Notes (May 02, 2023)
+=================================================
+
+Bug fixes/enhancements:
+
+- fixed bug in ``Model.make_params()`` for initial parameter values that were
+  not recognized as floats such as ``np.Int64``.  (Issue #871; PR #872)
+
+- explicitly set ``maxfun`` for ``l-bfgs-b`` method when setting
+  ``maxiter``. (Issue #864; Discussion #865; PR #866)
+
+.. _whatsnew_120_label:
+
+Version 1.2.0 Release Notes (April 05, 2023)
+=================================================
+
+New features:
+
+- add ``create_params`` function (PR #844)
+- add ``chi2_out`` and ``nsigma`` options to ``conf_interval2d()``
+- add ``ModelResult.summary()`` to return many resulting fit statistics and attributes into a JSON-able dict.
+- add ``correl_table()`` function to ``lmfit.printfuncs`` and ``correl_mode`` option to ``fit_report()`` and
+  ``ModelResult.fit_report()`` to optionally display a RST-formatted table of a correlation matrix.
+
+Bug fixes/enhancements:
+
+- fix bug when setting ``param.vary=True`` for a constrained parameter (Issue #859; PR #860)
+- fix bug in reported uncertainties for constrained parameters by better propating uncertainties (Issue #855; PR #856)
+- Coercing of user input data and independent data for ``Model`` to float64 ndarrays is somewhat less aggressive and
+  will not increase the precision of numpy ndarrays (see :ref:`model_data_coercion_section` for details). The resulting
+  calculation from a model or objective function is more aggressively coerced to float64.  (Issue #850; PR #853)
+- the default value of ``epsfcn`` is increased to 1.e-10 to allow for handling of data with precision less than float64
+  (Issue #850; PR #853)
+- fix ``conf_interval2d`` to use "increase chi-square by sigma**2*reduced chi-square" to give the ``sigma``-level
+  probabilities (Issue #848; PR #852)
+- fix reading of older ``ModelResult`` (Issue #845; included in PR #844)
+- fix deepcopy of ``Parameters`` and user data (mguhyo; PR #837)
+- improve ``Model.make_params`` and ``create_params`` to take optional dict of Parameter attributes (PR #844)
+- fix reporting of ``nfev`` from ``least_squares`` to better reflect actual number of function calls (Issue #842; PR #844)
+- fix bug in ``Model.eval`` when mixing parameters and keyword arguments (PR #844, #839)
+- re-adds ``residual`` to saved ``Model`` result (PR #844, #830)
+- ``ConstantModel`` and ``ComplexConstantModel`` will return an ndarray of the same shape as the independent variable
+  ``x`` (JeppeKlitgaard, Issue #840; PR #841)
+- update tests for latest versions of NumPy and SciPy.
+- many fixes of doc typos and updates of dependencies, pre-commit hooks, and CI.
+
+.. _whatsnew_110_label:
+
+Version 1.1.0 Release Notes (November 27, 2022)
+=================================================
+
+New features:
+
+- add ``Pearson4Model`` (@lellid; PR #800)
+- add ``SplineModel`` (PR #804)
+- add R^2 ``rsquared`` statistic to fit outputs and reports for Model fits (Issue #803; PR #810)
+- add calculation of ``dely`` for model components of composite models (Issue #761; PR #826)
 
 Bug fixes/enhancements:
 
 - make sure variable ``spercent`` is always defined in ``params_html_table`` functions (reported by @MySlientWind; Issue #768, PR #770)
 - always initialize the variables ``success`` and ``covar`` the ``MinimizerResult`` (reported by Marc W. Pound; PR #771)
-- build package following PEP517/PEP518; use pyproject.toml and setup.cfg; leave setup.py for now (PR #777)
+- build package following PEP517/PEP518; use ``pyproject.toml`` and ``setup.cfg``; leave ``setup.py`` for now (PR #777)
+- components used to create a ``CompositeModel`` can now have different independent variables (@Julian-Hochhaus; Discussion #787; PR #788)
+- fixed function definition for ``StepModel(form='linear')``, was not consistent with the other ones (@matpompili; PR #794)
+- fixed height factor for ``Gaussian2dModel``, was not correct (@matpompili; PR #795)
+- for covariances with negative diagonal elements, we set the covariance to ``None`` (PR #813)
+- fixed linear mode for ``RectangleModel`` (@arunpersaud; Issue #815; PR #816)
+- report correct initial values for parameters with bounds (Issue #820; PR #821)
+- allow recalculation of confidence intervals (@jagerber48; PR #798)
+- include 'residual' in JSON output of ModelResult.dumps (@mac01021; PR #830)
+- supports and is tested against Python 3.11; updated minimum required version of SciPy, NumPy, and asteval (PR #832)
+
+Deprecations:
+
+- remove support for Python 3.6 which reached EOL on 2021-12-23 (PR #790)
 
 
 .. _whatsnew_103_label:

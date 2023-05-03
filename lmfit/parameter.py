@@ -11,7 +11,7 @@ from .jsonutils import decode4js, encode4js
 from .lineshapes import tiny
 from .printfuncs import params_html_table
 
-SCIPY_FUNCTIONS = {'gamfcn': scipy.special.gamma}
+SCIPY_FUNCTIONS = {'gamfcn': scipy.special.gamma, 'loggammafcn': scipy.special.loggamma, 'betalnfnc': scipy.special.betaln}
 for fnc_name in ('erf', 'erfc', 'wofz'):
     SCIPY_FUNCTIONS[fnc_name] = getattr(scipy.special, fnc_name)
 
@@ -91,8 +91,14 @@ class Parameters(dict):
         _pars = self.__class__()
 
         # find the symbols that were added by users, not during construction
-        unique_symbols = {key: self._asteval.symtable[key]
-                          for key in self._asteval.user_defined_symbols()}
+        unique_symbols = {}
+        for key in self._asteval.user_defined_symbols():
+            try:
+                val = deepcopy(self._asteval.symtable[key])
+                unique_symbols[key] = val
+            except (TypeError, ValueError):
+                unique_symbols[key] = self._asteval.symtable[key]
+
         _pars._asteval.symtable.update(unique_symbols)
 
         # we're just about to add a lot of Parameter objects to the newly
@@ -106,10 +112,10 @@ class Parameters(dict):
                 param.vary = par.vary
                 param.brute_step = par.brute_step
                 param.stderr = par.stderr
-                param.correl = par.correl
+                param.correl = deepcopy(par.correl)
                 param.init_value = par.init_value
                 param.expr = par.expr
-                param.user_data = par.user_data
+                param.user_data = deepcopy(par.user_data)
                 parameter_list.append(param)
 
         _pars.add_many(*parameter_list)
@@ -318,6 +324,49 @@ class Parameters(dict):
     def _repr_html_(self):
         """Return a HTML representation of parameters data."""
         return params_html_table(self)
+
+    def set(self, **kws):
+        """Set Parameter values and other attributes.
+
+        Parameters
+        ----------
+        **kws : optional
+            Parameter names and initial values or dictionaries of
+                 values and attributes.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        1. keyword arguments will be used to create parameter names.
+        2. values can either be numbers (floats or integers) to set the
+           parameter value, or can be dictionaries with any of the following
+           keywords: ``value``, ``vary``, ``min``, ``max``, ``expr``,
+           ``brute_step``, or ``is_init_value`` to set those parameter attributes.
+        3. for each parameter,  ``is_init_value`` controls whether to set
+           ``init_value`` when setting ``value``, and defaults to True.
+
+        Examples
+        --------
+        >>> params = Parameters()
+        >>> params.add('xvar', value=0.50, min=0, max=1)
+        >>> params.add('yvar', expr='1.0 - xvar')
+        >>> params.set(xvar=0.80, zvar={'value':3, 'min':0})
+
+        """
+        for name, val in kws.items():
+            if name not in self:
+                self.__setitem__(name, Parameter(value=-inf, name=name,
+                                                 vary=True, min=-inf, max=inf,
+                                                 expr=None, brute_step=None))
+            par = self.__getitem__(name)
+            if isinstance(val, (float, int)):
+                val = {'value': val}
+            if 'is_init_value' not in val:
+                val['is_init_value'] = True
+            par.set(**val)
 
     def add(self, name, value=None, vary=True, min=-inf, max=inf, expr=None,
             brute_step=None):
@@ -590,7 +639,7 @@ class Parameter:
         self.min = min
         self.max = max
         self.brute_step = brute_step
-        self.vary = vary
+        self._vary = vary
         self._expr = expr
         self._expr_ast = None
         self._expr_eval = None
@@ -603,7 +652,7 @@ class Parameter:
         self._init_bounds()
 
     def set(self, value=None, vary=None, min=None, max=None, expr=None,
-            brute_step=None):
+            brute_step=None, is_init_value=True):
         """Set or update Parameter attributes.
 
         Parameters
@@ -624,6 +673,8 @@ class Parameter:
         brute_step : float, optional
             Step size for grid points in the `brute` method. To remove the
             step size you must use ``0``.
+        is_init_value: bool, optional
+            Whether to set value as `init_value`, when setting value.
 
         Notes
         -----
@@ -651,7 +702,7 @@ class Parameter:
 
         """
         if vary is not None:
-            self.vary = vary
+            self._vary = vary
             if vary:
                 self.__set_expression('')
 
@@ -664,7 +715,10 @@ class Parameter:
         # need to set this after min and max, so that it will use new
         # bounds in the setter for value
         if value is not None:
+            is_init_value = is_init_value or self.value in (None, -inf, inf)
             self.value = value
+            if is_init_value:
+                self.init_value = value
             self.__set_expression("")
 
         if expr is not None:
@@ -697,13 +751,13 @@ class Parameter:
 
     def __getstate__(self):
         """Get state for pickle."""
-        return (self.name, self.value, self.vary, self.expr, self.min,
+        return (self.name, self.value, self._vary, self.expr, self.min,
                 self.max, self.brute_step, self.stderr, self.correl,
                 self.init_value, self.user_data)
 
     def __setstate__(self, state):
         """Set state for pickle."""
-        (self.name, _value, self.vary, self.expr, self.min, self.max,
+        (self.name, _value, self._vary, self.expr, self.min, self.max,
          self.brute_step, self.stderr, self.correl, self.init_value,
          self.user_data) = state
         self._expr_ast = None
@@ -718,7 +772,7 @@ class Parameter:
         """Return printable representation of a Parameter object."""
         s = []
         sval = f"value={repr(self._getval())}"
-        if not self.vary and self._expr is None:
+        if not self._vary and self._expr is None:
             sval += " (fixed)"
         elif self.stderr is not None:
             sval += f" +/- {self.stderr:.3g}"
@@ -829,6 +883,18 @@ class Parameter:
             self._expr_eval.symtable[self.name] = self._val
 
     @property
+    def vary(self):
+        """Return whether the parameter is variable"""
+        return self._vary
+
+    @vary.setter
+    def vary(self, val):
+        """Set whether a parameter is varied"""
+        self._vary = val
+        if val:
+            self.__set_expression('')
+
+    @property
     def expr(self):
         """Return the mathematical expression used to constrain the value in fit."""
         return self._expr
@@ -847,7 +913,7 @@ class Parameter:
             val = None
         self._expr = val
         if val is not None:
-            self.vary = False
+            self._vary = False
         if not hasattr(self, '_expr_eval'):
             self._expr_eval = None
         if val is None:
@@ -982,3 +1048,37 @@ class Parameter:
     def __rsub__(self, other):
         """- (right)"""
         return other - self._getval()
+
+
+def create_params(**kws):
+    """Create lmfit.Parameters instance and set initial values and attributes.
+
+    Parameters
+    ----------
+    **kws
+        keywords are parameter names, value are dictionaries of Parameter
+        values and attributes.
+
+    Returns
+    -------
+    Parameters instance
+
+    Notes
+    -----
+    1. keyword arguments will be used to create parameter names.
+    2. values can either be numbers (floats or integers) to set the parameter
+       value, or can be dictionaries with any of the following keywords:
+       ``value``, ``vary``, ``min``, ``max``, ``expr``, ``brute_step``, or
+       ``is_init_value`` to set those parameter attributes.
+    3. for each parameter,  ``is_init_value`` controls whether to set
+       ``init_value`` when setting ``value``, and defaults to True.
+
+    Examples
+    --------
+    >>> params = create_params(amplitude=2, center=200,
+                               sigma={'value': 3, 'min':0},
+                               fwhm={'expr': '2.0*sigma'})
+    """
+    params = Parameters()
+    params.set(**kws)
+    return params
